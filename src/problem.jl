@@ -83,7 +83,7 @@ end
 function JumpProblem(p::P, a::A, dj::J, jc::C, vj::J2, rj::J3, mj::J4,
                      rng::R, kwargs::K) where {P, A, J, C, J2, J3, J4, R, K}
     iip = isinplace_jump(p, rj)
-    JumpProblem{iip, P, A, C, J, J2, J3, J4, R, K}(p, a, dj, jc, vj, rj, mj, rng, kwargs)
+    JumpProblem{iip, P, A, C, J, J2, J3, J4, J5, R, K}(p, a, dj, jc, vj, rj, mj, rng, kwargs)
 end
 
 # for remaking
@@ -134,6 +134,9 @@ end
 function JumpProblem(prob, jumps::MassActionJump; kwargs...)
     JumpProblem(prob, JumpSet(jumps); kwargs...)
 end
+function JumpProblem(prob, jumps::ConditionalIntensityJump...; kwargs...)
+    JumpProblem(prob, JumpSet(jumps...); kwargs...)
+end
 function JumpProblem(prob, jumps::AbstractJump...; kwargs...)
     JumpProblem(prob, JumpSet(jumps...); kwargs...)
 end
@@ -144,6 +147,10 @@ function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::Const
 end
 function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::VariableRateJump;
                      kwargs...)
+    JumpProblem(prob, aggregator, JumpSet(jumps); kwargs...)
+end
+function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::ConditionalIntensityJump;
+    kwargs...)
     JumpProblem(prob, aggregator, JumpSet(jumps); kwargs...)
 end
 function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::RegularJump;
@@ -170,7 +177,6 @@ function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::JumpS
                      rng = DEFAULT_RNG, scale_rates = true, useiszero = true,
                      spatial_system = nothing, hopping_constants = nothing,
                      callback = nothing, use_vrj_bounds = true, kwargs...)
-
     # initialize the MassActionJump rate constants with the user parameters
     if using_params(jumps.massaction_jump)
         rates = jumps.massaction_jump.param_mapper(prob.p)
@@ -211,15 +217,24 @@ function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::JumpS
     t, end_time, u = prob.tspan[1], prob.tspan[2], prob.u0
 
     # handle majs, crjs, and bounded vrjs
-    if (ndiscjumps == 0) && !is_spatial(aggregator)
+    if (ndiscjumps == 0) && !is_spatial(aggregator) 
         disc_agg = nothing
         constant_jump_callback = CallbackSet()
     else
+        if !isnothing(jumps.conditional_jump)
+            error("for now conditional jumps can only be treated separated")
+        end
         disc_agg = aggregate(aggregator, u, prob.p, t, end_time, jumps.constant_jumps, maj,
                              save_positions, rng; kwargs...)
         constant_jump_callback = DiscreteCallback(disc_agg)
     end
 
+    # handle conditional jumps
+    if !isnothing(jumps.conditional_jump)
+        disc_agg = aggregate(aggregator, u, prob.p, t, end_time, jumps.conditional_jump, maj,
+        save_positions, rng; kwargs...)
+        constant_jump_callback = DiscreteCallback(disc_agg)
+    end
     # handle any remaining vrjs
     if length(cvrjs) > 0
         new_prob = extend_problem(prob, cvrjs; rng)
@@ -230,7 +245,6 @@ function JumpProblem(prob, aggregator::AbstractAggregatorAlgorithm, jumps::JumpS
         variable_jump_callback = CallbackSet()
         cont_agg = JumpSet().variable_jumps
     end
-
     jump_cbs = CallbackSet(constant_jump_callback, variable_jump_callback)
     iip = isinplace_jump(prob, jumps.regular_jump)
     solkwargs = make_kwarg(; callback)

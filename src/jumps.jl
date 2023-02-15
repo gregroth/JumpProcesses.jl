@@ -195,6 +195,61 @@ end
 """
 $(TYPEDEF)
 
+Defines a jump process with a conditional intensity function. 
+
+`ConditionalIntensityJump`s can currently be used in the `REGIR` aggregator, and
+      can therefore be efficiently simulated in pure-jump `DiscreteProblem`s using the
+      `SSAStepper` time-stepper.
+
+## Fields
+
+$(FIELDS)
+
+## Notes
+- The REGIR aggregator is based on the algorthm proposed in Practical and scalable simulations of non-Markovian stochastic processes
+Aurelien Pelissier, Miroslav Phan, Niko Beerenwinkel and Maria Rodriguez Martinez
+"""
+struct ConditionalIntensityJump{R, F, R2, I, T, T2} <: AbstractJump
+    """Function `lambda(u,p,Δt)` that returns the jump's current rate given state
+    `u` at last jump, parameters `p` and time from last jump `Δt`."""
+    rate::R
+    """Function `affect!(integrator)` that updates the state for one occurrence
+    of the jump given `integrator`."""
+    affect!::F
+    """Function `urate(u, p, Δt)` that computes an upper bound for the rate. """
+    urate::R2
+    idxs::I
+    rootfind::Bool
+    interp_points::Int
+    save_positions::Tuple{Bool, Bool}
+    abstol::T
+    reltol::T2
+end
+
+"""
+```
+function ConditionalIntensityJump(rate, affect!, urate; rootfind = true,
+                                         idxs = nothing,
+                                         save_positions = (false, true),
+                                         interp_points = 10,
+                                         abstol = 1e-12, reltol = 0)
+```
+"""
+function ConditionalIntensityJump(rate, affect!, urate;
+                          rootfind = true,
+                          idxs = nothing,
+                          save_positions = (false, true),
+                          interp_points = 10,
+                          abstol = 1e-12, reltol = 0)
+
+    ConditionalIntensityJump(rate, affect!, urate, idxs, rootfind,
+                     interp_points, save_positions, abstol, reltol)
+end
+
+
+"""
+$(TYPEDEF)
+
 """
 struct RegularJump{iip, R, C, MD}
     rate::R
@@ -484,7 +539,7 @@ jprob = JumpProblem(oprob, Direct(), jset)
 sol = solve(jprob, Tsit5())
 ```
 """
-struct JumpSet{T1, T2, T3, T4} <: AbstractJump
+struct JumpSet{T1, T2, T3, T4, T5} <: AbstractJump
     """Collection of [`VariableRateJump`](@ref)s"""
     variable_jumps::T1
     """Collection of [`ConstantRateJump`](@ref)s"""
@@ -493,28 +548,34 @@ struct JumpSet{T1, T2, T3, T4} <: AbstractJump
     regular_jump::T3
     """Collection of [`MassActionJump`](@ref)s"""
     massaction_jump::T4
+    """Collection of [`ConditionalIntensityJump`](@ref)s"""
+    conditional_jump::T5
 end
-function JumpSet(vj, cj, rj, maj::MassActionJump{S, T, U, V}) where {S <: Number, T, U, V}
-    JumpSet(vj, cj, rj, check_majump_type(maj))
+function JumpSet(vj, cj, rj, maj::MassActionJump{S, T, U, V},cij) where {S <: Number, T, U, V}
+    JumpSet(vj, cj, rj, check_majump_type(maj), cij)
 end
 
-JumpSet(jump::ConstantRateJump) = JumpSet((), (jump,), nothing, nothing)
-JumpSet(jump::VariableRateJump) = JumpSet((jump,), (), nothing, nothing)
-JumpSet(jump::RegularJump) = JumpSet((), (), jump, nothing)
-JumpSet(jump::AbstractMassActionJump) = JumpSet((), (), nothing, jump)
+JumpSet(jump::ConstantRateJump) = JumpSet((), (jump,), nothing, nothing, nothing)
+JumpSet(jump::VariableRateJump) = JumpSet((jump,), (), nothing, nothing, nothing)
+JumpSet(jump::ConditionalIntensityJump) = JumpSet((), (), nothing, nothing,(jump,))
+JumpSet(jump::RegularJump) = JumpSet((), (), jump, nothing, nothing)
+JumpSet(jump::AbstractMassActionJump) = JumpSet((), (), nothing, jump, nothing)
 function JumpSet(; variable_jumps = (), constant_jumps = (),
-                 regular_jumps = nothing, massaction_jumps = nothing)
-    JumpSet(variable_jumps, constant_jumps, regular_jumps, massaction_jumps)
+                 regular_jumps = nothing, massaction_jumps = nothing, conditional_jumps = nothing)
+    JumpSet(variable_jumps, constant_jumps, regular_jumps, massaction_jumps, conditional_jumps)
 end
 JumpSet(jb::Nothing) = JumpSet()
 
 # For Varargs, use recursion to make it type-stable
 function JumpSet(jumps::AbstractJump...)
-    JumpSet(split_jumps((), (), nothing, nothing, jumps...)...)
+    JumpSet(split_jumps((), (), nothing, nothing, nothing, jumps...)...)
 end
-
+# For Varargs of ConditionalIntensityJump, use recursion to make it type-stable
+function JumpSet(jumps::ConditionalIntensityJump...)
+    JumpSet(split_jumps((), (), nothing, nothing, (), jumps...)...)
+end
 # handle vector of mass action jumps
-function JumpSet(vjs, cjs, rj, majv::Vector{T}) where {T <: MassActionJump}
+function JumpSet(vjs, cjs, rj, majv::Vector{T}, cij) where {T <: MassActionJump}
     if isempty(majv)
         error("JumpSets do not accept empty mass action jump collections; use \"nothing\" instead.")
     end
@@ -525,7 +586,7 @@ function JumpSet(vjs, cjs, rj, majv::Vector{T}) where {T <: MassActionJump}
         massaction_jump_combine(maj, majv[i])
     end
 
-    JumpSet(vjs, cjs, rj, maj)
+    JumpSet(vjs, cjs, rj, maj, cij)
 end
 
 @inline get_num_majumps(jset::JumpSet) = get_num_majumps(jset.massaction_jump)
@@ -551,24 +612,27 @@ num_jumps(jset::JumpSet) = num_majumps(jset) + num_crjs(jset) + num_vrjs(jset)
 num_discretejumps(jset::JumpSet) = num_majumps(jset) + num_crjs(jset) + num_bndvrjs(jset)
 num_cdiscretejumps(jset::JumpSet) = num_majumps(jset) + num_crjs(jset)
 
-@inline split_jumps(vj, cj, rj, maj) = vj, cj, rj, maj
-@inline function split_jumps(vj, cj, rj, maj, v::VariableRateJump, args...)
-    split_jumps((vj..., v), cj, rj, maj, args...)
+@inline split_jumps(vj, cj, rj, maj, cij) = vj, cj, rj, maj, cij
+@inline function split_jumps(vj, cj, rj, maj, cij, c::ConditionalIntensityJump, args...)
+    split_jumps(vj, cj, rj, maj,(cij..., c), args...)
 end
-@inline function split_jumps(vj, cj, rj, maj, c::ConstantRateJump, args...)
-    split_jumps(vj, (cj..., c), rj, maj, args...)
+@inline function split_jumps(vj, cj, rj, maj, cij, v::VariableRateJump, args...)
+    split_jumps((vj..., v), cj, rj, maj,cij, args...)
 end
-@inline function split_jumps(vj, cj, rj, maj, c::RegularJump, args...)
-    split_jumps(vj, cj, regular_jump_combine(rj, c), maj, args...)
+@inline function split_jumps(vj, cj, rj, maj, cij, c::ConstantRateJump, args...)
+    split_jumps(vj, (cj..., c), rj, maj, cij, args...)
 end
-@inline function split_jumps(vj, cj, rj, maj, c::MassActionJump, args...)
-    split_jumps(vj, cj, rj, massaction_jump_combine(maj, c), args...)
+@inline function split_jumps(vj, cj, rj, maj, cij, c::RegularJump, args...)
+    split_jumps(vj, cj, regular_jump_combine(rj, c), maj, cij, args...)
 end
-@inline function split_jumps(vj, cj, rj, maj, j::JumpSet, args...)
+@inline function split_jumps(vj, cj, rj, maj, cij, c::MassActionJump, args...)
+    split_jumps(vj, cj, rj, massaction_jump_combine(maj, c), cij, args...)
+end
+@inline function split_jumps(vj, cj, rj, maj, cij, j::JumpSet, args...)
     split_jumps((vj..., j.variable_jumps...),
                 (cj..., j.constant_jumps...),
                 regular_jump_combine(rj, j.regular_jump),
-                massaction_jump_combine(maj, j.massaction_jump), args...)
+                massaction_jump_combine(maj, j.massaction_jump),cij, args...)
 end
 
 regular_jump_combine(rj1::RegularJump, rj2::Nothing) = rj1

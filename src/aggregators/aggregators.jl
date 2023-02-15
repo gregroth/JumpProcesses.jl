@@ -157,6 +157,21 @@ algorithm with optimal binning,  Journal of Chemical Physics 143, 074108
 """
 struct DirectCRDirect <: AbstractAggregatorAlgorithm end
 
+# REGIR type methods
+
+"""
+Rejection-based Gillespie algorithm for non-Markovian Reactions (REGIR), a general and
+scalable framework to simulate non-Markovian stochastic systems with arbitrary inter-event time
+distributions.
+
+Practical and scalable simulations of non-Markovian stochastic processes
+Aurelien Pelissier, Miroslav Phan, Niko Beerenwinkel and Maria Rodriguez
+Martinez
+"""
+struct Regir <: AbstractAggregatorAlgorithm end
+
+
+
 const JUMP_AGGREGATORS = (Direct(), DirectFW(), DirectCR(), SortingDirect(), RSSA(), FRM(),
                           FRMFW(), NRM(), RSSACR(), RDirect(), Coevolve())
 

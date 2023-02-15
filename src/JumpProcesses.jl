@@ -51,6 +51,7 @@ include("aggregators/directcr.jl")
 include("aggregators/rssacr.jl")
 include("aggregators/rdirect.jl")
 include("aggregators/coevolve.jl")
+include("aggregators/regir.jl")
 
 # spatial:
 include("spatial/spatial_massaction_jump.jl")
@@ -73,7 +74,7 @@ include("coupling.jl")
 include("SSA_stepper.jl")
 include("simple_regular_solve.jl")
 
-export ConstantRateJump, VariableRateJump, RegularJump,
+export ConstantRateJump, VariableRateJump, ConditionalIntensityJump, RegularJump,
        MassActionJump, JumpSet
 
 export JumpProblem
@@ -85,6 +86,7 @@ export BracketData, RSSA
 export FRM, FRMFW, NRM
 export RSSACR, RDirect
 export Coevolve
+export Regir
 
 export get_num_majumps, needs_depgraph, needs_vartojumps_map
 

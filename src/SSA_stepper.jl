@@ -155,7 +155,6 @@ function DiffEqBase.__init(jump_prob::JumpProblem,
             Random.seed!(cb.condition.rng, seed)
         end
     end
-
     opts = (callback = CallbackSet(callback),)
     prob = jump_prob.prob
 
